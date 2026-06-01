@@ -1,21 +1,30 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
 from functools import reduce
-from datetime import datetime, timedelta
+
 import polars as pl
 
 from config import HORIZON
 from src.model import build_mlf, fit
 
+# Columns that are never exogenous
+_RESERVED = {"unique_id", "ds", "y", "cutoff"}
 
-def _normalize_weights(weights):
+
+def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     total = sum(weights.values())
     return {k: v / total for k, v in weights.items()}
 
 
-def _add_ensemble(df, weights):
+def _add_ensemble(df: pl.DataFrame, weights: dict[str, float]) -> pl.DataFrame:
     weights = _normalize_weights(weights)
     terms = [pl.col(m) * w for m, w in weights.items() if m in df.columns]
     return df.with_columns(reduce(lambda a, b: a + b, terms).alias("ensemble"))
+
+
+_FREQ_DELTA = {
+    "1h": timedelta(hours=1),
+    "1m": timedelta(minutes=1),
+}
 
 
 def backtest(
@@ -23,52 +32,80 @@ def backtest(
     test_df: pl.DataFrame,
     horizon: int = HORIZON,
     step_size: int = HORIZON,
+    freq: str = "1h",
+    exog: list[str] | None = None,
     refit: bool | int = False,
     ensemble_weights: dict[str, float] | None = None,
     level: list[int] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """
+    Rolling-window backtest.
+
+    Parameters
+    ----------
+    train_df         : initial training data
+    test_df          : held-out data to evaluate on
+    horizon          : forecast horizon in steps
+    step_size        : how many steps to advance per window
+    exog             : exogenous column names, e.g. ["mean_temp"].
+                       Pass None (default) for a purely univariate backtest.
+                       Must match the columns present in both train_df and test_df.
+    refit            : False → static model, reuses history for lag features only.
+                       True  → refit on expanding window at every cutoff.
+    ensemble_weights : optional dict mapping model names to weights for a
+                       blended 'ensemble' column, e.g.
+                       {"LinearRegression": 1, "Ridge": 1, "XGBRegressor": 2}
+    level            : prediction interval levels, e.g. [95]
+
+    Returns
+    -------
+    predictions_df : all per-window forecasts with actuals joined
+    windows_df     : metadata for every backtest window
+    """
     if isinstance(refit, int) and refit > 1:
         raise NotImplementedError(f"refit={refit} not yet implemented.")
 
-    # cutoffs every step_size hours through test_df
+    exog = exog or []
+    unit = _FREQ_DELTA[freq]
+
+    # Build cutoffs
     test_min, test_max = test_df["ds"].min(), test_df["ds"].max()
     assert isinstance(test_min, datetime) and isinstance(test_max, datetime)
     cutoffs, t = [], test_min
-
-    while t + timedelta(hours=horizon - 1) <= test_max:
+    while t + unit * (horizon - 1) <= test_max:
         cutoffs.append(t)
-        t += timedelta(hours=step_size)
+        t += unit * step_size
 
-    print(f"Backtesting {len(cutoffs)} windows | refit={refit}")
+    print(f"Backtesting {len(cutoffs)} windows | refit={refit} | exog={exog or 'none'}")
 
-    # initial fit on train_df only — never sees test data
-    mlf = build_mlf()
-    fit(mlf, train_df, horizon=horizon)
+    # Initial fit on train_df only
+    mlf = build_mlf(freq=freq)
+    fit(mlf, train_df, horizon=horizon, exog=exog)
 
     all_preds, windows = [], []
 
     for i, cutoff in enumerate(cutoffs):
-        test_end = cutoff + timedelta(hours=horizon - 1)
+        test_end = cutoff + unit * (horizon - 1)
 
         if refit is True:
-            # expand training set with test data preceding the cutoff
             rolling_train = pl.concat([
                 train_df,
                 test_df.filter(pl.col("ds") < cutoff),
             ])
-            mlf = build_mlf()
-            fit(mlf, rolling_train, horizon=horizon)
+            mlf = build_mlf(freq=freq)
+            fit(mlf, rolling_train, horizon=horizon, exog=exog)
             new_df_arg = None
             train_end = rolling_train["ds"].max()
             train_rows = len(rolling_train)
         else:
-            # static models, but provide history up to cutoff for lag features
+            # Provide history up to cutoff so lag features can be computed
+            history_cols = ["unique_id", "ds", "y"] + exog
             history = pl.concat([
-                train_df,
-                test_df.filter(pl.col("ds") < cutoff),
-            ]).drop("forecast")
+                train_df.select(history_cols),
+                test_df.filter(pl.col("ds") < cutoff).select(history_cols),
+            ])
             new_df_arg = history
-            train_end = train_df["ds"].max()  # model was fit on this
+            train_end = train_df["ds"].max()
             train_rows = len(train_df)
 
         window = test_df.filter(
@@ -77,11 +114,15 @@ def backtest(
         if window.is_empty():
             continue
 
-        X_df = window.select(["unique_id", "ds", "mean_temp"])
-        predict_kwargs = dict(h=horizon, X_df=X_df, new_df=new_df_arg)
+        X_df = window.select(["unique_id", "ds"] + exog) if exog else None
+        predict_kwargs: dict = dict(h=horizon, X_df=X_df, new_df=new_df_arg)
         if level is not None:
             predict_kwargs["level"] = level
+
         preds = mlf.predict(**predict_kwargs)
+        test_tz = window.schema["ds"].time_zone if hasattr(window.schema["ds"], "time_zone") else None
+        if test_tz:
+            preds = preds.with_columns(pl.col("ds").dt.replace_time_zone(test_tz))
         preds = preds.join(window.select(["ds", "y"]), on="ds", how="left")
         preds = preds.with_columns(pl.lit(cutoff).alias("cutoff"))
         all_preds.append(preds)

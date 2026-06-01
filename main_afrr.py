@@ -1,30 +1,39 @@
 # %%
-from config import HORIZON
 from src.data import split
-from src.model import build_mlf, fit, predict, cross_validate
+from src.model import build_mlf, fit, predict
 from src.backtest import backtest
 from src.plot import plot_backtest
-import loaders.heat_demand as loader
+import loaders.afrr as loader
 
-DATA_PATH = "data/heat_demand_features_set_old.csv"
-EXOG      = ["mean_temp"]
+# %%
+BIDDING_ZONE = "DK1"
+HORIZON      = 15
+EXOG         = None
 
+# %%
 # ── Data ─────────────────────────────────────────────────────────────
-df = loader.load(DATA_PATH)
-train_df, test_df = split(df, train_start="2025-01-01", test_start="2025-04-15", test_end="2025-04-28")
+df = loader.load(BIDDING_ZONE, time_from="2025-04-14 00:00")
 
+train_df, test_df = split(df, train_start="2025-04-14", test_start="2025-04-15", test_end="2025-04-15 06:00")
+
+# %%
 # ── Fit & predict ────────────────────────────────────────────────────
-mlf = build_mlf(freq="1h")
+mlf = build_mlf(freq="1m")
 fit(mlf, train_df, horizon=HORIZON, exog=EXOG)
 forecast_df = predict(mlf, test_df, horizon=HORIZON, exog=EXOG)
 
+# %%
 # ── Backtest ─────────────────────────────────────────────────────────
 predictions_df, windows_df = backtest(
     train_df=train_df,
     test_df=test_df,
     horizon=HORIZON,
+    freq="1m",
     exog=EXOG,
-    refit=False,
+    refit=True,
     ensemble_weights={"LinearRegression": 1, "Ridge": 1, "RandomForestRegressor": 1, "XGBRegressor": 1},
 )
+
+# %%
 plot_backtest(predictions_df)
+# %%
