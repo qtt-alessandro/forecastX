@@ -14,7 +14,7 @@ df = load_data(DATA_PATH)
 train_df, test_df = split(
     df,
     train_start="2025-01-01", train_end="2025-04-15",
-    test_start="2025-04-15", #test_end="2025-02-28",
+    test_start="2025-04-15", test_end="2025-04-28",
 )
 
 #%%
