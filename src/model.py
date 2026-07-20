@@ -4,6 +4,8 @@ from mlforecast.lag_transforms import RollingMean, RollingStd
 from mlforecast.target_transforms import Differences
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
 from xgboost import XGBRegressor
 
 from config import HORIZON
@@ -21,6 +23,15 @@ _FREQ_CONFIGS = {
         target_transforms=[Differences([24])],
         date_features=["hour", "weekday", "month", "year", is_weekend, hour_sin, hour_cos],
     ),
+    "15m": dict(
+        lags=[1, 2, 3, 4, 8, 12, 16, 24, 48, 96, 672],
+        lag_transforms={
+            4:  [RollingMean(window_size=4), RollingStd(window_size=4, min_samples=1)],
+            96: [RollingMean(window_size=96, min_samples=1)],
+        },
+        target_transforms=[Differences([1])],
+        date_features=["minute", "hour", "weekday", is_weekend, hour_sin, hour_cos],
+    ),
     "1m": dict(
         lags=[1, 2, 3, 5, 8, 10, 12, 15, 20, 30, 40, 50, 60],
         lag_transforms={
@@ -33,19 +44,37 @@ _FREQ_CONFIGS = {
 }
 
 
-def build_mlf(freq: str = "1h") -> MLForecast:
+# Available models, by name. build_mlf() only includes DEFAULT_MODELS unless
+# the caller asks for specific ones -- e.g. GaussianProcessRegressor is O(n^3)
+# in training rows, so it's opt-in per pipeline rather than always fit.
+MODEL_REGISTRY = {
+    "LinearRegression": lambda: LinearRegression(),
+    "Ridge": lambda: Ridge(alpha=1.0),
+    "RandomForestRegressor": lambda: RandomForestRegressor(n_estimators=100, random_state=42),
+    "XGBRegressor": lambda: XGBRegressor(n_estimators=100, random_state=42, verbosity=0),
+    "GaussianProcessRegressor": lambda: GaussianProcessRegressor(
+        kernel=ConstantKernel(1.0) * RBF(length_scale=1.0) + WhiteKernel(noise_level=1.0),
+        normalize_y=True,
+        alpha=1e-6,
+        random_state=42,
+    ),
+}
+
+DEFAULT_MODELS = ["LinearRegression", "Ridge", "RandomForestRegressor", "XGBRegressor"]
+
+
+def build_mlf(freq: str = "1h", models: list[str] | None = None) -> MLForecast:
     """
     Instantiate MLForecast for the given frequency.
-    Supported: '1h' (hourly), '1m' (minutely).
+    Supported: '1h' (hourly), '15m' (quarter-hourly), '1m' (minutely).
+
+    `models` selects which entries from MODEL_REGISTRY to fit, by name.
+    Defaults to DEFAULT_MODELS.
     """
     cfg = _FREQ_CONFIGS[freq]
+    names = models or DEFAULT_MODELS
     return MLForecast(
-        models=[
-            LinearRegression(),
-            Ridge(alpha=1.0),
-            RandomForestRegressor(n_estimators=100, random_state=42),
-            XGBRegressor(n_estimators=100, random_state=42, verbosity=0),
-        ],
+        models=[MODEL_REGISTRY[name]() for name in names],
         freq=freq,
         **cfg,
     )

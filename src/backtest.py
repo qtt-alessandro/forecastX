@@ -22,8 +22,9 @@ def _add_ensemble(df: pl.DataFrame, weights: dict[str, float]) -> pl.DataFrame:
 
 
 _FREQ_DELTA = {
-    "1h": timedelta(hours=1),
-    "1m": timedelta(minutes=1),
+    "1h":  timedelta(hours=1),
+    "15m": timedelta(minutes=15),
+    "1m":  timedelta(minutes=1),
 }
 
 
@@ -37,6 +38,7 @@ def backtest(
     refit: bool | int = False,
     ensemble_weights: dict[str, float] | None = None,
     level: list[int] | None = None,
+    models: list[str] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
     Rolling-window backtest.
@@ -56,6 +58,8 @@ def backtest(
                        blended 'ensemble' column, e.g.
                        {"LinearRegression": 1, "Ridge": 1, "XGBRegressor": 2}
     level            : prediction interval levels, e.g. [95]
+    models           : model names from src.model.MODEL_REGISTRY to fit.
+                       Defaults to src.model.DEFAULT_MODELS.
 
     Returns
     -------
@@ -79,7 +83,7 @@ def backtest(
     print(f"Backtesting {len(cutoffs)} windows | refit={refit} | exog={exog or 'none'}")
 
     # Initial fit on train_df only
-    mlf = build_mlf(freq=freq)
+    mlf = build_mlf(freq=freq, models=models)
     fit(mlf, train_df, horizon=horizon, exog=exog)
 
     all_preds, windows = [], []
@@ -92,7 +96,7 @@ def backtest(
                 train_df,
                 test_df.filter(pl.col("ds") < cutoff),
             ])
-            mlf = build_mlf(freq=freq)
+            mlf = build_mlf(freq=freq, models=models)
             fit(mlf, rolling_train, horizon=horizon, exog=exog)
             new_df_arg = None
             train_end = rolling_train["ds"].max()

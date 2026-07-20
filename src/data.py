@@ -1,6 +1,65 @@
-import polars as pl
-from datetime import datetime, timezone
+import re
+import warnings
+from datetime import datetime, timedelta, timezone
 from typing import cast
+
+import polars as pl
+
+_FREQ_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _freq_to_timedelta(freq: str) -> timedelta:
+    match = re.fullmatch(r"(\d+)([smhd])", freq)
+    if match is None:
+        raise ValueError(f"Unsupported frequency string: {freq!r} (expected e.g. '1m', '15m', '1h', '1d')")
+    value, unit = match.groups()
+    return timedelta(seconds=int(value) * _FREQ_UNIT_SECONDS[unit])
+
+
+def estimate_freq(df: pl.DataFrame) -> timedelta:
+    """Estimate the native frequency of df as the most common ds step per series."""
+    diffs = (
+        df.sort(["unique_id", "ds"])
+        .select(pl.col("ds").diff().over("unique_id").alias("dt"))["dt"]
+        .drop_nulls()
+    )
+    if diffs.is_empty():
+        raise ValueError("Cannot estimate data frequency: need at least two rows per series.")
+    return cast(timedelta, diffs.mode().min())
+
+
+def resample(df: pl.DataFrame, freq: str) -> pl.DataFrame:
+    """
+    Align df to the requested frequency.
+
+    If the data is finer than `freq`, aggregate it (mean for numeric
+    columns, first value otherwise) and emit a warning. If the data is
+    coarser than `freq`, raise, since finer data cannot be invented.
+    """
+    target = _freq_to_timedelta(freq)
+    estimated = estimate_freq(df)
+
+    if estimated == target:
+        return df
+    if estimated > target:
+        raise ValueError(
+            f"Data frequency ({estimated}) is coarser than requested {freq!r}; cannot upsample."
+        )
+
+    warnings.warn(
+        f"Data frequency ({estimated}) is finer than requested {freq!r}; "
+        f"resampling to {freq!r} by mean."
+    )
+    aggs = [
+        pl.col(c).mean() if df.schema[c].is_numeric() else pl.col(c).first()
+        for c in df.columns
+        if c not in ("unique_id", "ds")
+    ]
+    return (
+        df.sort(["unique_id", "ds"])
+        .group_by_dynamic("ds", every=freq, group_by="unique_id")
+        .agg(aggs)
+    )
 
 
 def split(
