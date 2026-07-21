@@ -1,0 +1,5 @@
+pandas
+numpy
+pulp          # LP solver, bundles CBC; alt: scipy.optimize.linprog
+pytest
+matplotlib    # optional, for plotting dispatch/prices
