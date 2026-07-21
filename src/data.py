@@ -1,27 +1,64 @@
-import polars as pl
-
-from config import HORIZON
-from datetime import datetime
+import re
+import warnings
+from datetime import datetime, timedelta, timezone
 from typing import cast
 
+import polars as pl
 
-def load_data(path: str) -> pl.DataFrame:
+_FREQ_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _freq_to_timedelta(freq: str) -> timedelta:
+    match = re.fullmatch(r"(\d+)([smhd])", freq)
+    if match is None:
+        raise ValueError(f"Unsupported frequency string: {freq!r} (expected e.g. '1m', '15m', '1h', '1d')")
+    value, unit = match.groups()
+    return timedelta(seconds=int(value) * _FREQ_UNIT_SECONDS[unit])
+
+
+def estimate_freq(df: pl.DataFrame) -> timedelta:
+    """Estimate the native frequency of df as the most common ds step per series."""
+    diffs = (
+        df.sort(["unique_id", "ds"])
+        .select(pl.col("ds").diff().over("unique_id").alias("dt"))["dt"]
+        .drop_nulls()
+    )
+    if diffs.is_empty():
+        raise ValueError("Cannot estimate data frequency: need at least two rows per series.")
+    return cast(timedelta, diffs.mode().min())
+
+
+def resample(df: pl.DataFrame, freq: str) -> pl.DataFrame:
     """
-    Load raw CSV, select relevant columns, forward-fill gaps,
-    and upsample to a continuous hourly index.
+    Align df to the requested frequency.
+
+    If the data is finer than `freq`, aggregate it (mean for numeric
+    columns, first value otherwise) and emit a warning. If the data is
+    coarser than `freq`, raise, since finer data cannot be invented.
     """
+    target = _freq_to_timedelta(freq)
+    estimated = estimate_freq(df)
+
+    if estimated == target:
+        return df
+    if estimated > target:
+        raise ValueError(
+            f"Data frequency ({estimated}) is coarser than requested {freq!r}; cannot upsample."
+        )
+
+    warnings.warn(
+        f"Data frequency ({estimated}) is finer than requested {freq!r}; "
+        f"resampling to {freq!r} by mean."
+    )
+    aggs = [
+        pl.col(c).mean() if df.schema[c].is_numeric() else pl.col(c).first()
+        for c in df.columns
+        if c not in ("unique_id", "ds")
+    ]
     return (
-        pl.read_csv(path, try_parse_dates=True)
-        .select(["UTC", "realization", "mean_temp", "forecast"])
-        .rename({"UTC": "ds", "realization": "y"})
-        .sort("ds")
-        .upsample(time_column="ds", every="1h")
-        .with_columns([
-            pl.col("y").forward_fill(),
-            pl.col("mean_temp").forward_fill(),
-            pl.col("forecast").forward_fill(),
-        ])
-        .with_columns(pl.lit("heat_demand").alias("unique_id"))
+        df.sort(["unique_id", "ds"])
+        .group_by_dynamic("ds", every=freq, group_by="unique_id")
+        .agg(aggs)
     )
 
 
@@ -32,24 +69,19 @@ def split(
     train_end: str | datetime | None = None,
     test_end: str | datetime | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """
-    Split df into train and test sets with explicit boundaries.
+    """Split df into train and test sets with explicit boundaries."""
+    ds_tz = df.schema["ds"].time_zone if hasattr(df.schema["ds"], "time_zone") else None
 
-    Defaults
-    --------
-    train_end : test_start  (train ends where test begins)
-    test_end  : end of df   (use all remaining data)
-    """
     def _parse(x):
-        return datetime.fromisoformat(x) if isinstance(x, str) else x
+        dt = datetime.fromisoformat(x) if isinstance(x, str) else x
+        if ds_tz and dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
 
     train_start = _parse(train_start)
     test_start  = _parse(test_start)
     train_end   = _parse(train_end) if train_end is not None else test_start
-    if test_end is not None:
-        test_end = _parse(test_end)
-    else:
-        test_end = _parse(test_end) if test_end is not None else cast(datetime, df["ds"].max())
+    test_end    = _parse(test_end)  if test_end  is not None else cast(datetime, df["ds"].max())
 
     train_df = df.filter((pl.col("ds") >= train_start) & (pl.col("ds") < train_end))
     test_df  = df.filter((pl.col("ds") >= test_start)  & (pl.col("ds") <= test_end))
