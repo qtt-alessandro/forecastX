@@ -10,8 +10,6 @@ wheels/
 .venv
 
 # Data files — store locally, not in git
-data/
-*.csv
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
