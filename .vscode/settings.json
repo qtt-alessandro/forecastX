@@ -1,5 +1,0 @@
-{
-  "python.defaultInterpreterPath": ".venv/bin/python",
-  "python.analysis.venvPath": ".",
-  "python.analysis.venv": ".venv"
-}

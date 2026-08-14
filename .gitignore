@@ -20,3 +20,8 @@ Thumbs.db
 
 # Cache
 .cache.sqlite
+.coverage
+lightning_logs/
+
+# Generated forecast and visualization artifacts
+artifacts/
