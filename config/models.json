@@ -1,0 +1,44 @@
+{
+  "models": [
+    {
+      "name": "SeasonalNaive",
+      "file": "models/seasonal_naive.json"
+    },
+    {
+      "name": "LinearRegression",
+      "file": "models/linear_regression.json"
+    },
+    {
+      "name": "Ridge",
+      "file": "models/ridge.json"
+    },
+    {
+      "name": "Lasso",
+      "file": "models/lasso.json"
+    },
+    {
+      "name": "ElasticNet",
+      "file": "models/elastic_net.json"
+    },
+    {
+      "name": "HistGradientBoostingRegressor",
+      "file": "models/hist_gradient_boosting.json"
+    },
+    {
+      "name": "LGBMRegressor",
+      "file": "models/lightgbm.json"
+    },
+    {
+      "name": "XGBRegressor",
+      "file": "models/xgboost.json"
+    },
+    {
+      "name": "SARIMAX",
+      "file": "models/sarimax.json"
+    },
+    {
+      "name": "LSTM",
+      "file": "models/lstm.json"
+    }
+  ]
+}

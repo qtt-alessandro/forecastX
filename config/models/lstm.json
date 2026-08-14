@@ -1,0 +1,26 @@
+{
+  "name": "LSTM",
+  "parameters": {
+    "input_size": 140,
+    "encoder_n_layers": 1,
+    "encoder_hidden_size": 32,
+    "encoder_dropout": 0.0,
+    "decoder_hidden_size": 32,
+    "decoder_layers": 2,
+    "batch_size": 64,
+    "max_steps": 50,
+    "val_check_steps": 25,
+    "early_stop_patience_steps": 3,
+    "cat_exog_list": [
+      "calendar_hour",
+      "calendar_weekday",
+      "calendar_month"
+    ],
+    "categorical_cardinalities": {
+      "calendar_hour": 24,
+      "calendar_weekday": 7,
+      "calendar_month": 12
+    },
+    "enable_model_summary": false
+  }
+}

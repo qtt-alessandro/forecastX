@@ -23,5 +23,5 @@ Thumbs.db
 .coverage
 lightning_logs/
 
-# Generated forecast and visualization artifacts
-artifacts/
+# Generated forecast and visualization output
+output/

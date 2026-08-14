@@ -1,0 +1,6 @@
+{
+  "name": "Ridge",
+  "parameters": {
+    "ridge__alpha": 100.0
+  }
+}

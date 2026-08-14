@@ -21,7 +21,7 @@ from forecastx import (
     statistical_backtest,
 )
 from forecastx.ensemble import add_weighted_ensemble, inverse_error_weights
-from loaders.heat_demand import load
+from forecastx.heat_demand import load_heat_demand
 
 DATA_PATH = "data/heat_demand_features_set_old.csv"
 HORIZON = 24
@@ -78,7 +78,7 @@ def evaluate_period(
 
 
 def main() -> None:
-    data = add_temperature_features(load(DATA_PATH), heating_balance=15.0, cooling_balance=20.0)
+    data = add_temperature_features(load_heat_demand(DATA_PATH), heating_balance=15.0, cooling_balance=20.0)
 
     # Model and ensemble selection: ends before the final April evaluation period.
     validation_train, validation = split(
@@ -116,7 +116,7 @@ def main() -> None:
     metrics = evaluate_forecasts(predictions, train_df=train, seasonal_period=24)
     coverage = interval_metrics(predictions)
     residuals = residual_diagnostics(predictions)
-    output = Path("artifacts")
+    output = Path("output")
     output.mkdir(parents=True, exist_ok=True)
     artifact = ForecastArtifact(
         predictions,

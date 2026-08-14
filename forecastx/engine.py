@@ -52,7 +52,7 @@ class ForecastEngine:
 
     @property
     def requires_refit_for_new_origin(self) -> bool:
-        return any(MODEL_REGISTRY[name].backend != "mlforecast" for name in self.config.models)
+        return any(MODEL_REGISTRY[name].backend == "statsforecast" for name in self.config.models)
 
     def _resolve_transform(self, train_df: pl.DataFrame) -> list[Differences] | None:
         requested = self.config.target_transform
@@ -291,7 +291,12 @@ class ForecastEngine:
             frames.append(_as_polars(self._stats_univariate.predict(h=horizon, level=levels or None)))
         if self._neural is not None:
             neural_future = window.select(["unique_id", "ds", *self.exog]).to_pandas()
-            frames.append(_as_polars(self._neural.predict(futr_df=neural_future)))
+            neural_kwargs: dict[str, Any] = {"futr_df": neural_future}
+            if history_df is not None:
+                neural_kwargs["df"] = history.select(
+                    ["unique_id", "ds", "y", *self.exog]
+                ).to_pandas()
+            frames.append(_as_polars(self._neural.predict(**neural_kwargs)))
         if not frames:
             raise RuntimeError("No forecast backends were fitted.")
         forecasts = frames[0]

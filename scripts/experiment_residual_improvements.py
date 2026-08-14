@@ -26,7 +26,7 @@ from forecastx import (
     residual_diagnostics,
     split,
 )
-from loaders.heat_demand import load
+from forecastx.heat_demand import load_heat_demand
 
 DATA_PATH = "data/heat_demand_features_set_old.csv"
 TRAIN_START = "2024-12-12"
@@ -114,7 +114,7 @@ def add_thermal_dynamics(df: pl.DataFrame) -> pl.DataFrame:
 
 def load_data() -> tuple[pl.DataFrame, pl.DataFrame]:
     base = add_temperature_features(
-        load(DATA_PATH),
+        load_heat_demand(DATA_PATH),
         heating_balance=15.0,
         cooling_balance=20.0,
     )
@@ -213,7 +213,7 @@ def run_model_candidate(
 
 
 def load_existing_predictions(base: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, float]]:
-    path = Path("artifacts/full_history_forecasts.json")
+    path = Path("output/full_history_forecasts.json")
     if not path.exists():
         raise FileNotFoundError("Run scripts/backtest_full_history.py before adaptive experiments.")
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -435,7 +435,7 @@ def export_best_model(
         for lag in [1, 24, 168]
     }
     reports = residual_diagnostics(winner)
-    output = Path("artifacts")
+    output = Path("output")
     metadata = {
         "candidate": name,
         "frequency": "1h",
@@ -488,7 +488,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default="artifacts/residual_improvement_experiments.json",
+        default="output/residual_improvement_experiments.json",
     )
     parser.add_argument(
         "--export-best",

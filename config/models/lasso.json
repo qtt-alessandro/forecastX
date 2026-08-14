@@ -1,0 +1,7 @@
+{
+  "name": "Lasso",
+  "parameters": {
+    "lasso__alpha": 0.001,
+    "lasso__max_iter": 5000
+  }
+}

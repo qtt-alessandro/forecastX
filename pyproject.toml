@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-neural = ["neuralforecast>=3.1.0,<4", "torch>=2.9.1,<2.10"]
+neural = ["neuralforecast>=3.2.1,<4", "torch>=2.9.1,<2.10"]
 dev = ["pytest>=8.0", "pytest-cov>=6.0"]
 
 [build-system]
