@@ -1,0 +1,24 @@
+{
+  "base_exogenous": [
+    "mean_temp",
+    "mean_temp_squared",
+    "heating_degree",
+    "cooling_degree"
+  ],
+  "temporal": [
+    "calendar_hour",
+    "calendar_weekday",
+    "calendar_month",
+    "calendar_day_of_year",
+    "calendar_is_weekend",
+    "calendar_is_working_day",
+    "calendar_is_business_hour",
+    "calendar_is_holiday",
+    "calendar_hour_sin",
+    "calendar_hour_cos",
+    "calendar_week_sin",
+    "calendar_week_cos",
+    "calendar_year_sin",
+    "calendar_year_cos"
+  ]
+}

@@ -22,7 +22,7 @@ from forecastx import (
     split,
 )
 from forecastx.ensemble import add_weighted_ensemble, inverse_error_weights
-from loaders.heat_demand import load
+from forecastx.heat_demand import load_heat_demand
 from scripts.benchmark_heat_demand import ML_MODELS, STAT_MODELS, evaluate_period
 
 DATA_PATH = "data/heat_demand_features_set_old.csv"
@@ -49,7 +49,7 @@ def monthly_metrics(predictions: pl.DataFrame, train_df: pl.DataFrame) -> pl.Dat
 
 def main() -> None:
     data = add_temperature_features(
-        load(DATA_PATH),
+        load_heat_demand(DATA_PATH),
         heating_balance=15.0,
         cooling_balance=20.0,
     )
@@ -84,7 +84,7 @@ def main() -> None:
     overall = evaluate_forecasts(predictions, train_df=train, seasonal_period=24)
     by_month = monthly_metrics(predictions, train)
     residuals = residual_diagnostics(predictions)
-    output = Path("artifacts")
+    output = Path("output")
     output.mkdir(parents=True, exist_ok=True)
 
     ForecastArtifact(

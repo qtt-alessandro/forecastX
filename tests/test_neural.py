@@ -4,6 +4,7 @@ import importlib.util
 
 import pytest
 
+from forecastx.backtest import backtest
 from forecastx.engine import build_mlf, fit, predict
 
 
@@ -27,3 +28,29 @@ def test_small_lstm_smoke(hourly_frame):
     result = predict(engine, future, horizon=10, exog=["mean_temp"])
     assert len(result) == 10
     assert "LSTM" in result.columns
+
+
+@pytest.mark.skipif(importlib.util.find_spec("neuralforecast") is None, reason="neural extra is not installed")
+def test_lstm_backtest_reuses_weights_with_fresh_history(hourly_frame):
+    predictions, windows = backtest(
+        train_df=hourly_frame.head(500),
+        test_df=hourly_frame.slice(500, 20),
+        horizon=10,
+        step_size=10,
+        freq="1h",
+        exog=["mean_temp"],
+        models=["LSTM"],
+        refit=False,
+        level=[],
+        n_jobs=1,
+        model_params={
+            "LSTM": {
+                "max_steps": 1,
+                "val_check_steps": 1,
+                "early_stop_patience_steps": -1,
+            }
+        },
+    )
+
+    assert len(predictions) == 20
+    assert windows["refitted"].to_list() == [True, False]

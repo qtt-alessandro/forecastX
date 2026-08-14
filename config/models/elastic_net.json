@@ -1,0 +1,8 @@
+{
+  "name": "ElasticNet",
+  "parameters": {
+    "elasticnet__alpha": 0.001,
+    "elasticnet__l1_ratio": 0.3,
+    "elasticnet__max_iter": 5000
+  }
+}

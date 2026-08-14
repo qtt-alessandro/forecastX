@@ -119,10 +119,11 @@ Recommended evaluation layers:
 - High/opt-in: GaussianProcess (cubic fit cost), SARIMAX, and LSTM.
 
 LSTM uses Nixtla's encoder-decoder implementation with robust scaling, a small
-hidden state, early stopping, future exogenous support, and a probabilistic normal
-loss. It is not a default: less than one year of one series is precisely where a
-small tree or regularized linear model can outperform a neural model at a fraction
-of the operational cost.
+hidden state, early stopping, numerical and categorical future exogenous support,
+and a probabilistic normal loss. Categorical columns and their cardinalities are
+declared explicitly in `config/models/lstm.json`. It is not a default: less than
+one year of one series is precisely where a small tree or regularized linear model
+can outperform a neural model at a fraction of the operational cost.
 
 ## Leakage and data-exposure controls
 
@@ -135,7 +136,9 @@ of the operational cost.
   rows by default. Actuals require `include_actual=True`.
 - Backtest history includes only observations strictly earlier than each origin.
 - Missing targets require an explicit policy and imputed rows are marked.
-- Statistical/neural models cannot silently reuse stale state at a changed origin.
+- Statistical models cannot silently reuse stale state at a changed origin.
+  NeuralForecast can reuse fixed learned weights while rebuilding its input window
+  and scalers from the observations available at the new origin.
 
 ## Stopping rule for tuning
 
@@ -212,7 +215,7 @@ forecast wins overall and in every month, subject to the unresolved provenance a
 weather-vintage caveat above.
 
 Run `python scripts/backtest_full_history.py` to regenerate the JSON report, safe
-forecast artifact, and standalone interactive Plotly explorer in `artifacts/`.
+forecast output, and standalone interactive Plotly explorer in `output/`.
 
 ## Residual-improvement ablation result
 

@@ -12,11 +12,11 @@ from forecastx import (
     quality_report,
     split,
 )
-from loaders.heat_demand import load
+from forecastx.heat_demand import load_heat_demand
 
 
 def main() -> None:
-    data = load("data/heat_demand_features_set_old.csv")
+    data = load_heat_demand("data/heat_demand_features_set_old.csv")
     train, future = split(
         data,
         train_start="2025-01-01",

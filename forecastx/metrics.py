@@ -76,6 +76,56 @@ def evaluate_forecasts(
     return pl.DataFrame(rows).sort(["horizon_step", "mae"])
 
 
+def evaluate_monthly_forecasts(
+    predictions: pl.DataFrame,
+    *,
+    train_df: pl.DataFrame,
+    seasonal_period: int,
+) -> pl.DataFrame:
+    """Evaluate point forecasts separately for every calendar month."""
+
+    labelled = predictions.with_columns(pl.col("ds").dt.strftime("%Y-%m").alias("month"))
+    rows = [
+        evaluate_forecasts(
+            labelled.filter(pl.col("month") == month).drop("month"),
+            train_df=train_df,
+            seasonal_period=seasonal_period,
+        ).with_columns(pl.lit(month).alias("month"))
+        for month in labelled["month"].unique().sort().to_list()
+    ]
+    return pl.concat(rows).select(
+        ["month", "model", "observations", "mae", "rmse", "bias", "smape", "mase"]
+    )
+
+
+def evaluate_backtest(
+    predictions: pl.DataFrame,
+    *,
+    train_df: pl.DataFrame,
+    seasonal_period: int,
+) -> dict[str, pl.DataFrame]:
+    """Return overall, monthly, and forecast-horizon metric tables."""
+
+    return {
+        "overall": evaluate_forecasts(
+            predictions,
+            train_df=train_df,
+            seasonal_period=seasonal_period,
+        ),
+        "monthly": evaluate_monthly_forecasts(
+            predictions,
+            train_df=train_df,
+            seasonal_period=seasonal_period,
+        ),
+        "by_horizon": evaluate_forecasts(
+            predictions,
+            train_df=train_df,
+            seasonal_period=seasonal_period,
+            by_horizon=True,
+        ),
+    }
+
+
 def interval_metrics(predictions: pl.DataFrame) -> pl.DataFrame:
     rows: list[dict[str, object]] = []
     for column in predictions.columns:

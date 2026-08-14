@@ -225,9 +225,9 @@ def backtest(
     )
     if provisional.requires_refit_for_new_origin and not fully_refits and len(forecast_starts) > 1:
         raise ValueError(
-            "Statistical and neural models require refit=True for multiple origins in a mixed-backend run. "
+            "Statistical models require refit=True for multiple origins in a mixed-backend run. "
             "Use statistical_backtest for efficient fixed-parameter state updates. "
-            "Use MLForecast models only when coefficients must remain fixed."
+            "MLForecast and NeuralForecast models can reuse fixed weights with fresh history."
         )
 
     requested_levels = list(level or [])
