@@ -97,9 +97,7 @@ if __name__ == "__main__":
         output_dir=OUTPUT_DIR,
         configuration=run_configuration,
         elapsed_seconds=training_seconds,
-        chart_title=(
-            f"Heat demand: {', '.join(selected_models)} and calibrated ensemble"
-        ),
+        chart_title=None,
         weather_note=(
             "This retrospective run uses realized mean_temp. Production evaluation "
             "requires archived weather-forecast vintages."

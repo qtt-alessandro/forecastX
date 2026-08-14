@@ -33,7 +33,7 @@ def _rgba(hex_color: str, alpha: float) -> str:
 def forecast_dashboard(
     predictions: pl.DataFrame,
     *,
-    title: str = "Forecast explorer",
+    title: str | None = "Forecast explorer",
 ) -> go.Figure:
     """Zoomable point, interval, residual, and horizon-error exploration."""
 
@@ -159,6 +159,6 @@ def forecast_dashboard(
         hovermode="x unified",
         height=900,
         legend={"orientation": "h", "y": 1.04, "x": 0},
-        margin={"l": 70, "r": 30, "t": 110, "b": 50},
+        margin={"l": 70, "r": 30, "t": 80 if title is None else 110, "b": 50},
     )
     return fig

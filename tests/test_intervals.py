@@ -40,3 +40,20 @@ def test_dashboard_accepts_interval_colors():
     )
     figure = forecast_dashboard(predictions)
     assert len(figure.data) >= 4
+
+
+def test_dashboard_can_omit_overall_title():
+    predictions = pl.DataFrame(
+        {
+            "unique_id": ["x", "x"],
+            "ds": [1, 2],
+            "y": [1.0, 2.0],
+            "Ridge": [1.1, 1.9],
+            "horizon_step": [1, 2],
+        }
+    )
+
+    figure = forecast_dashboard(predictions, title=None)
+
+    assert figure.layout.title.text is None
+    assert figure.layout.margin.t == 80

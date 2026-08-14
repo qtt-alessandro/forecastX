@@ -11,6 +11,7 @@ from typing import Any
 import polars as pl
 
 from forecastx.audit import external_forecast_columns
+from forecastx.reporting import model_comparison_markdown
 from forecastx.visualization import forecast_dashboard
 
 
@@ -58,7 +59,7 @@ def export_backtest_results(
     output_dir: str | Path,
     configuration: dict[str, Any],
     elapsed_seconds: float,
-    chart_title: str,
+    chart_title: str | None,
     weather_note: str,
 ) -> dict[str, Path]:
     """Write the complete backtest result set to one output directory."""
@@ -70,6 +71,7 @@ def export_backtest_results(
         "windows": destination / "windows.csv",
         "metrics": destination / "metrics.json",
         "chart": destination / "forecast_explorer.html",
+        "comparison": destination / "model_comparison.md",
     }
     predictions.write_csv(paths["forecasts"])
     windows.drop("ensemble_weights").write_csv(paths["windows"])
@@ -91,6 +93,15 @@ def export_backtest_results(
         json.dumps(report, indent=2, allow_nan=False),
         encoding="utf-8",
     )
+    paths["comparison"].write_text(
+        model_comparison_markdown(
+            metrics["overall"],
+            ensemble_weights=windows["ensemble_weights"][0],
+            configuration=configuration,
+            elapsed_seconds=elapsed_seconds,
+        ),
+        encoding="utf-8",
+    )
     return paths
 
 
@@ -110,3 +121,4 @@ def print_backtest_summary(
     print(f"Elapsed time: {elapsed_seconds / 60:.2f} minutes")
     print(f"Ensemble weights: {windows['ensemble_weights'][0]}")
     print(f"Interactive chart: {paths['chart']}")
+    print(f"Model comparison: {paths['comparison']}")

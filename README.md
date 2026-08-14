@@ -40,7 +40,8 @@ The workflow performs these operations in order:
 5. Runs a rolling-origin backtest.
 6. Calibrates a performance-weighted ensemble using only pre-test windows.
 7. Evaluates overall, monthly, and horizon-level accuracy.
-8. Exports forecasts, metrics, intervals, and an interactive chart.
+8. Exports forecasts, metrics, intervals, an interactive chart, and a ranked
+   Markdown model comparison.
 
 Results are written to:
 
@@ -48,6 +49,7 @@ Results are written to:
 - `output/windows.csv`
 - `output/metrics.json`
 - `output/forecast_explorer.html`
+- `output/model_comparison.md`
 
 ## Configuration files
 
