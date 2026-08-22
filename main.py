@@ -8,11 +8,12 @@ from time import perf_counter
 
 from forecastx import add_temperature_features, backtest, split
 from forecastx.config import (
-    load_feature_configuration,
+    load_covariate_configuration,
     load_model_configuration,
     load_run_configuration,
 )
 from forecastx.heat_demand import (
+    add_synthetic_temperature_forecast,
     add_temporal_features,
     load_heat_demand,
     validate_feature_columns,
@@ -37,18 +38,36 @@ if __name__ == "__main__":
     selected_models, selected_model_params = load_model_configuration(
         MODEL_MANIFEST_PATH
     )
-    temporal_features, exogenous_features = load_feature_configuration(
+    hist_exog, futr_exog, futr_exog_vintages = load_covariate_configuration(
         FEATURE_CONFIG_PATH
     )
 
     raw_df = load_heat_demand(DATA_PATH, frequency=run_config.frequency)
-    temperature_df = add_temperature_features(
+    weather_df = add_synthetic_temperature_forecast(
         raw_df,
+        freq=run_config.frequency,
+        lead_steps=run_config.horizon,
+        random_state=run_config.random_seed,
+    )
+    actual_temperature_df = add_temperature_features(
+        weather_df,
+        column="mean_temp_actual",
+        role="actual",
+        heating_balance=15.0,
+        cooling_balance=20.0,
+    )
+    temperature_df = add_temperature_features(
+        actual_temperature_df,
+        column="mean_temp_forecast",
+        role="forecast",
         heating_balance=15.0,
         cooling_balance=20.0,
     )
     model_df = add_temporal_features(temperature_df)
-    validate_feature_columns(model_df, exogenous_features)
+    validate_feature_columns(
+        model_df,
+        [*hist_exog, *futr_exog, *futr_exog_vintages.values()],
+    )
 
     train_df, test_df = split(
         model_df,
@@ -64,7 +83,9 @@ if __name__ == "__main__":
         horizon=run_config.horizon,
         step_size=run_config.step_size,
         freq=run_config.frequency,
-        exog=exogenous_features,
+        hist_exog=hist_exog,
+        futr_exog=futr_exog,
+        futr_exog_vintages=futr_exog_vintages,
         models=selected_models,
         refit=run_config.refit_every,
         training_window=run_config.training_window,
@@ -88,7 +109,9 @@ if __name__ == "__main__":
         **run_config.to_dict(),
         "models": selected_models,
         "model_params": selected_model_params,
-        "features": exogenous_features,
+        "hist_exog": hist_exog,
+        "futr_exog": futr_exog,
+        "futr_exog_vintages": futr_exog_vintages,
     }
     output_paths = export_backtest_results(
         predictions_df,
@@ -99,7 +122,9 @@ if __name__ == "__main__":
         elapsed_seconds=training_seconds,
         chart_title=None,
         weather_note=(
-            "This retrospective run uses realized mean_temp. Production evaluation "
+            "This run uses measured temperature only as historical input and a "
+            f"causal synthetic {run_config.horizon}-step forecast proxy. "
+            "Production evaluation still "
             "requires archived weather-forecast vintages."
         ),
     )

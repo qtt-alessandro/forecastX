@@ -9,6 +9,7 @@ import polars as pl
 from statsforecast import StatsForecast
 
 from forecastx.config import FAST_MODELS, ForecastConfig
+from forecastx.covariates import as_of_covariates, resolve_covariate_names
 from forecastx.data import frequency_delta, validate_schema
 from forecastx.engine import ForecastEngine, build_mlf, fit
 from forecastx.ensemble import add_weighted_ensemble, inverse_error_weights
@@ -151,6 +152,9 @@ def backtest(
     test_df: pl.DataFrame,
     horizon: int,
     exog: list[str] | None = None,
+    hist_exog: list[str] | None = None,
+    futr_exog: list[str] | None = None,
+    futr_exog_vintages: dict[str, str] | None = None,
     step_size: int | None = None,
     freq: str = "1h",
     refit: bool | int = False,
@@ -173,13 +177,21 @@ def backtest(
     with ``step_size=H`` it predicts non-overlapping H-step blocks.
     """
 
-    exog = exog or []
+    role_aware_covariates = any(
+        value is not None for value in (hist_exog, futr_exog, futr_exog_vintages)
+    )
+    historical, future = resolve_covariate_names(
+        exog=exog,
+        hist_exog=hist_exog,
+        futr_exog=futr_exog,
+    )
+    vintages = dict(futr_exog_vintages or {})
     models = tuple(models or FAST_MODELS)
     step_size = step_size or horizon
     if horizon < 1 or step_size < 1:
         raise ValueError("horizon and step_size must be positive.")
-    validate_schema(train_df, exog=exog, require_complete=True)
-    validate_schema(test_df, exog=exog, require_complete=True)
+    validate_schema(train_df, exog=[*historical, *future], require_complete=True)
+    validate_schema(test_df, exog=[*historical, *future], require_complete=True)
     if set(train_df["unique_id"].unique()) != set(test_df["unique_id"].unique()):
         raise ValueError("Train and test series identifiers must match.")
     delta = frequency_delta(freq)
@@ -193,7 +205,10 @@ def backtest(
     if not forecast_starts:
         raise ValueError("Test data is shorter than the forecast horizon.")
 
-    if all(MODEL_REGISTRY[name].backend == "statsforecast" for name in models):
+    if (
+        not role_aware_covariates
+        and all(MODEL_REGISTRY[name].backend == "statsforecast" for name in models)
+    ):
         if ensemble_weights == "performance":
             raise ValueError("Use explicit pre-test weights with statistical_backtest.")
         return statistical_backtest(
@@ -201,7 +216,7 @@ def backtest(
             test_df=test_df,
             horizon=horizon,
             models=models,
-            exog=exog,
+            exog=list(future),
             step_size=step_size,
             freq=freq,
             refit=refit,
@@ -244,7 +259,9 @@ def backtest(
             train_df=interval_train,
             test_df=interval_test,
             horizon=horizon,
-            exog=exog,
+            hist_exog=list(historical),
+            futr_exog=list(future),
+            futr_exog_vintages=vintages,
             step_size=step_size,
             freq=freq,
             refit=refit,
@@ -272,7 +289,9 @@ def backtest(
             train_df=calibration_train,
             test_df=calibration_test,
             horizon=horizon,
-            exog=exog,
+            hist_exog=list(historical),
+            futr_exog=list(future),
+            futr_exog_vintages=vintages,
             step_size=step_size,
             freq=freq,
             refit=True if provisional.requires_refit_for_new_origin else refit,
@@ -295,13 +314,28 @@ def backtest(
     engine: ForecastEngine | None = None
     predictions: list[pl.DataFrame] = []
     windows: list[dict[str, object]] = []
+    source = pl.concat([train_df, test_df], how="vertical_relaxed").sort(
+        ["unique_id", "ds"]
+    )
     for window_id, forecast_start in enumerate(forecast_starts):
-        observed = pl.concat(
-            [
-                train_df,
-                test_df.filter(pl.col("ds") < forecast_start),
-            ],
-            how="vertical_relaxed",
+        cutoff = forecast_start - delta
+        past_covariates, future_covariates = as_of_covariates(
+            source,
+            cutoff=cutoff,
+            horizon=horizon,
+            freq=freq,
+            hist_exog=historical,
+            futr_exog=future,
+            futr_exog_vintages=vintages,
+        )
+        observed_targets = source.filter(pl.col("ds") <= cutoff).select(
+            ["unique_id", "ds", "y"]
+        )
+        observed = observed_targets.join(
+            past_covariates,
+            on=["unique_id", "ds"],
+            how="inner",
+            validate="1:1",
         ).sort(["unique_id", "ds"])
         history = _tail_per_series(observed, training_window)
         refitted = _should_refit(refit, window_id)
@@ -316,30 +350,42 @@ def backtest(
                 n_jobs=n_jobs,
                 model_params=model_params,
             )
-            fit(engine, history, horizon=horizon, exog=exog)
+            fit(
+                engine,
+                history,
+                horizon=horizon,
+                hist_exog=list(historical),
+                futr_exog=list(future),
+                futr_exog_vintages=vintages,
+            )
             history_arg = None
         else:
             if engine is None:
                 raise RuntimeError("Backtest engine was not initialized.")
             history_arg = history
-        future = test_df.filter(
-            pl.col("ds").is_between(
-                forecast_start,
-                forecast_start + delta * (horizon - 1),
-                closed="both",
-            )
+        truth = future_covariates.select(["unique_id", "ds"]).join(
+            source.select(["unique_id", "ds", "y"]),
+            on=["unique_id", "ds"],
+            how="left",
+            validate="1:1",
         )
         assert engine is not None
         forecast = engine.predict(
-            future,
+            future_covariates,
             horizon=horizon,
-            exog=exog,
+            hist_exog=list(historical),
+            futr_exog=list(future),
             history_df=history_arg,
             level=engine_levels,
         )
-        forecast = forecast.with_columns(
+        forecast = forecast.join(
+            truth,
+            on=["unique_id", "ds"],
+            how="left",
+            validate="1:1",
+        ).with_columns(
             pl.lit(window_id).alias("window_id"),
-            pl.lit(forecast_start - delta).alias("cutoff"),
+            pl.lit(cutoff).alias("cutoff"),
             pl.lit(forecast_start).alias("forecast_start"),
             (pl.col("ds").rank("ordinal").over("unique_id")).cast(pl.Int32).alias("horizon_step"),
         )
@@ -347,7 +393,7 @@ def backtest(
         windows.append(
             {
                 "window_id": window_id,
-                "cutoff": forecast_start - delta,
+                "cutoff": cutoff,
                 "forecast_start": forecast_start,
                 "forecast_end": forecast_start + delta * (horizon - 1),
                 "train_start": history["ds"].min(),

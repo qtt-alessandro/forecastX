@@ -3,6 +3,7 @@
 from forecastx.audit import LeakageAuditReport, future_target_invariance
 from forecastx.backtest import backtest, statistical_backtest
 from forecastx.config import FAST_MODELS, ForecastConfig
+from forecastx.covariates import as_of_covariates
 from forecastx.data import DataQualityReport, load_csv, quality_report, resample, split
 from forecastx.diagnostics import distribution_drift, recommend_validation, stationarity_report
 from forecastx.engine import ForecastEngine, build_mlf, fit, predict
@@ -24,6 +25,7 @@ __all__ = [
     "backtest",
     "add_temperature_features",
     "add_conformal_intervals",
+    "as_of_covariates",
     "build_mlf",
     "compare_training_windows",
     "distribution_drift",

@@ -1,10 +1,22 @@
 {
-  "base_exogenous": [
-    "mean_temp",
-    "mean_temp_squared",
-    "heating_degree",
-    "cooling_degree"
+  "hist_exog": [
+    "mean_temp_actual",
+    "mean_temp_squared_actual",
+    "heating_degree_actual",
+    "cooling_degree_actual"
   ],
+  "futr_exog": [
+    "mean_temp_forecast",
+    "mean_temp_squared_forecast",
+    "heating_degree_forecast",
+    "cooling_degree_forecast"
+  ],
+  "futr_exog_vintages": {
+    "mean_temp_forecast": "mean_temp_forecast_vintage_ds",
+    "mean_temp_squared_forecast": "mean_temp_forecast_vintage_ds",
+    "heating_degree_forecast": "mean_temp_forecast_vintage_ds",
+    "cooling_degree_forecast": "mean_temp_forecast_vintage_ds"
+  },
   "temporal": [
     "calendar_hour",
     "calendar_weekday",

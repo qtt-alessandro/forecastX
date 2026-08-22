@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from forecastx.data import load_csv, resample
+from forecastx.data import frequency_delta, load_csv, resample
 
 
 def load_heat_demand(path: str | Path, *, frequency: str = "1h") -> pl.DataFrame:
@@ -22,6 +22,47 @@ def load_heat_demand(path: str | Path, *, frequency: str = "1h") -> pl.DataFrame
         exog=["mean_temp", "forecast"],
     )
     return resample(frame, frequency, target_fill="seasonal")
+
+
+def add_synthetic_temperature_forecast(
+    frame: pl.DataFrame,
+    *,
+    freq: str = "1h",
+    lead_steps: int = 24,
+    error_std: float = 1.5,
+    random_state: int = 42,
+) -> pl.DataFrame:
+    """Separate measured temperature from a reproducible causal forecast proxy.
+
+    This is demonstration data, not a replacement for archived weather vintages.
+    The forecast for a target uses only the measurement at its issue timestamp,
+    plus noise; it never uses the target timestamp's realized temperature.
+    """
+
+    if lead_steps < 1:
+        raise ValueError("lead_steps must be positive.")
+    if error_std < 0:
+        raise ValueError("error_std cannot be negative.")
+    if "mean_temp" not in frame.columns:
+        raise ValueError("Input data is missing measured column 'mean_temp'.")
+
+    ordered = frame.sort(["unique_id", "ds"]).rename(
+        {"mean_temp": "mean_temp_actual"}
+    )
+    noise = np.random.default_rng(random_state).normal(0.0, error_std, len(ordered))
+    lead = frequency_delta(freq) * lead_steps
+    return (
+        ordered.with_columns(pl.Series("_temperature_forecast_error", noise))
+        .with_columns(
+            (
+                pl.col("mean_temp_actual").shift(lead_steps).over("unique_id")
+                + pl.col("_temperature_forecast_error")
+            ).alias("mean_temp_forecast"),
+            (pl.col("ds") - lead).alias("mean_temp_forecast_vintage_ds"),
+        )
+        .drop_nulls("mean_temp_forecast")
+        .drop("_temperature_forecast_error")
+    )
 
 
 def easter_sunday(year: int) -> date:

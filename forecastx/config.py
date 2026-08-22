@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 
 ForecastStrategy = Literal["recursive", "direct"]
@@ -184,6 +184,11 @@ def load_feature_configuration(path: str | Path) -> tuple[list[str], list[str]]:
     config = read_json(path)
     base = config.get("base_exogenous")
     temporal = config.get("temporal")
+    if base is None:
+        historical, future, _ = load_covariate_configuration(path)
+        if not isinstance(temporal, list):
+            raise ValueError(f"{path} must contain a 'temporal' list.")
+        return temporal, [*historical, *future]
     if (
         not isinstance(base, list)
         or not all(isinstance(name, str) for name in base)
@@ -195,6 +200,51 @@ def load_feature_configuration(path: str | Path) -> tuple[list[str], list[str]]:
     if len(features) != len(set(features)):
         raise ValueError(f"Feature names in {path} must be unique.")
     return temporal, features
+
+
+def load_covariate_configuration(
+    path: str | Path,
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """Load explicit Nixtla historical/future covariate roles and vintages."""
+
+    path = Path(path)
+    config = read_json(path)
+    historical = config.get("hist_exog")
+    future = config.get("futr_exog")
+    temporal = config.get("temporal")
+    vintages = config.get("futr_exog_vintages", {})
+    lists = {
+        "hist_exog": historical,
+        "futr_exog": future,
+        "temporal": temporal,
+    }
+    invalid = [
+        name
+        for name, values in lists.items()
+        if not isinstance(values, list)
+        or not all(isinstance(value, str) for value in values)
+    ]
+    if invalid:
+        raise ValueError(f"{path} contains invalid covariate lists: {invalid}")
+    if not isinstance(vintages, dict) or not all(
+        isinstance(feature, str) and isinstance(column, str)
+        for feature, column in vintages.items()
+    ):
+        raise ValueError(f"{path} contains an invalid 'futr_exog_vintages' mapping.")
+
+    historical_values = cast(list[str], historical)
+    future_values = cast(list[str], future)
+    temporal_values = cast(list[str], temporal)
+    future_with_calendar = [*future_values, *temporal_values]
+    if len(historical_values) != len(set(historical_values)) or len(future_with_calendar) != len(
+        set(future_with_calendar)
+    ):
+        raise ValueError(f"Covariate names in {path} must be unique within each role.")
+    if overlap := sorted(set(historical_values) & set(future_with_calendar)):
+        raise ValueError(f"Covariate roles in {path} overlap: {overlap}")
+    if unknown := sorted(set(vintages) - set(future_values)):
+        raise ValueError(f"Vintage mappings in {path} reference unknown forecasts: {unknown}")
+    return historical_values, future_with_calendar, dict(vintages)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
 import polars as pl
 
@@ -32,6 +34,7 @@ def add_temperature_features(
     df: pl.DataFrame,
     *,
     column: str = "mean_temp",
+    role: Literal["actual", "forecast"] | None = None,
     heating_balance: float = 15.0,
     cooling_balance: float = 18.0,
 ) -> pl.DataFrame:
@@ -43,8 +46,20 @@ def add_temperature_features(
 
     if column not in df.columns:
         raise ValueError(f"Temperature column {column!r} is missing.")
+    if role is None:
+        squared = f"{column}_squared"
+        heating = "heating_degree"
+        cooling = "cooling_degree"
+    else:
+        suffix = f"_{role}"
+        if not column.endswith(suffix):
+            raise ValueError(f"Temperature column {column!r} must end with {suffix!r}.")
+        base = column.removesuffix(suffix)
+        squared = f"{base}_squared{suffix}"
+        heating = f"heating_degree{suffix}"
+        cooling = f"cooling_degree{suffix}"
     return df.with_columns(
-        pl.col(column).pow(2).alias(f"{column}_squared"),
-        (pl.lit(heating_balance) - pl.col(column)).clip(lower_bound=0).alias("heating_degree"),
-        (pl.col(column) - pl.lit(cooling_balance)).clip(lower_bound=0).alias("cooling_degree"),
+        pl.col(column).pow(2).alias(squared),
+        (pl.lit(heating_balance) - pl.col(column)).clip(lower_bound=0).alias(heating),
+        (pl.col(column) - pl.lit(cooling_balance)).clip(lower_bound=0).alias(cooling),
     )

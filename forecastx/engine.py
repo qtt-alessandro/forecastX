@@ -14,6 +14,7 @@ from mlforecast.utils import PredictionIntervals
 from statsforecast import StatsForecast
 
 from forecastx.config import FAST_MODELS, ForecastConfig
+from forecastx.covariates import resolve_covariate_names, validate_vintage_mapping
 from forecastx.data import frequency_delta, validate_schema
 from forecastx.diagnostics import StationarityReport, stationarity_report
 from forecastx.ensemble import add_weighted_ensemble
@@ -23,6 +24,25 @@ from forecastx.models import MODEL_REGISTRY, validate_model_names
 
 def _as_polars(frame: Any) -> pl.DataFrame:
     return frame if isinstance(frame, pl.DataFrame) else pl.from_pandas(frame)
+
+
+def _validate_historical_vintages(
+    frame: pl.DataFrame,
+    vintages: dict[str, str],
+    *,
+    context: str,
+) -> None:
+    for vintage_column in dict.fromkeys(vintages.values()):
+        if vintage_column not in frame.columns:
+            raise ValueError(f"{context} is missing forecast vintage column {vintage_column!r}.")
+        if not isinstance(frame.schema[vintage_column], pl.Datetime):
+            raise TypeError(f"Forecast vintage column {vintage_column!r} must be a Polars Datetime.")
+        if frame[vintage_column].null_count():
+            raise ValueError(f"{context} vintage column {vintage_column!r} contains nulls.")
+        if frame.filter(pl.col(vintage_column) >= pl.col("ds")).height:
+            raise ValueError(
+                f"{context} vintage column {vintage_column!r} was not issued before its target."
+            )
 
 
 class ForecastEngine:
@@ -35,7 +55,10 @@ class ForecastEngine:
             raise ValueError(f"model_params were provided for unselected models: {unused_parameters}")
         self.config = config
         self.horizon: int | None = None
+        self.hist_exog: tuple[str, ...] = ()
+        self.futr_exog: tuple[str, ...] = ()
         self.exog: tuple[str, ...] = ()
+        self.futr_exog_vintages: dict[str, str] = {}
         self.stationarity: list[StationarityReport] = []
         self.selected_transform: str = config.target_transform
         self._mlf: MLForecast | None = None
@@ -116,7 +139,7 @@ class ForecastEngine:
                 freq=self.config.freq,
                 n_jobs=jobs,
             )
-            columns = ["unique_id", "ds", "y", *self.exog]
+            columns = ["unique_id", "ds", "y", *self.futr_exog]
             self._stats_exog.fit(train_df.select(columns))
         if univariate_names:
             self._stats_univariate = StatsForecast(
@@ -152,7 +175,8 @@ class ForecastEngine:
             "early_stop_patience_steps": 3,
             "val_check_steps": 25,
             "scaler_type": "robust",
-            "futr_exog_list": list(self.exog),
+            "hist_exog_list": list(self.hist_exog),
+            "futr_exog_list": list(self.futr_exog),
             "loss": loss,
             "random_seed": self.config.random_state,
             "alias": "LSTM",
@@ -162,7 +186,11 @@ class ForecastEngine:
         parameters.update(self.config.model_params.get("LSTM", {}))
         model = LSTM(**parameters)
         self._neural = NeuralForecast(models=[model], freq=self.config.freq)
-        self._neural.fit(df=train_df.to_pandas(), val_size=max(horizon * 2, 24))
+        columns = ["unique_id", "ds", "y", *self.hist_exog, *self.futr_exog]
+        self._neural.fit(
+            df=train_df.select(columns).to_pandas(),
+            val_size=max(horizon * 2, 24),
+        )
 
     def fit(
         self,
@@ -170,12 +198,21 @@ class ForecastEngine:
         *,
         horizon: int,
         exog: list[str] | None = None,
+        hist_exog: list[str] | None = None,
+        futr_exog: list[str] | None = None,
+        futr_exog_vintages: dict[str, str] | None = None,
         training_window: int | None = None,
     ) -> "ForecastEngine":
         if horizon < 1:
             raise ValueError("horizon must be positive.")
-        exog = exog or []
-        validate_schema(train_df, exog=exog, require_complete=True)
+        historical, future = resolve_covariate_names(
+            exog=exog,
+            hist_exog=hist_exog,
+            futr_exog=futr_exog,
+        )
+        vintages = validate_vintage_mapping(future, futr_exog_vintages)
+        validate_schema(train_df, exog=[*historical, *future], require_complete=True)
+        _validate_historical_vintages(train_df, vintages, context="Training data")
         if training_window is not None:
             if training_window <= max(self.config.profile.lags) + horizon:
                 raise ValueError("training_window must exceed the largest lag plus the forecast horizon.")
@@ -188,7 +225,10 @@ class ForecastEngine:
         if train_df.select(pl.struct(["unique_id", "ds"]).is_duplicated().any()).item():
             raise ValueError("Duplicate (unique_id, ds) rows are not allowed.")
         self.horizon = horizon
-        self.exog = tuple(exog)
+        self.hist_exog = historical
+        self.futr_exog = future
+        self.exog = future  # Backwards-compatible name for the legacy future-only API.
+        self.futr_exog_vintages = vintages
         self._train_df = train_df.sort(["unique_id", "ds"])
         self._fit_end = {
             str(series["unique_id"][0]): cast(datetime, series["ds"].max())
@@ -213,14 +253,15 @@ class ForecastEngine:
             }
             if self.config.strategy == "direct":
                 fit_kwargs["max_horizon"] = horizon
-            columns = ["unique_id", "ds", "y", *self.exog]
+            columns = ["unique_id", "ds", "y", *self.futr_exog]
             self._mlf.fit(self._train_df.select(columns), **fit_kwargs)
         self._fit_statsforecast(self._train_df)
         self._fit_neuralforecast(self._train_df, horizon)
         return self
 
     def _future_window(self, future_df: pl.DataFrame, history_df: pl.DataFrame, horizon: int) -> pl.DataFrame:
-        required = ["unique_id", "ds", *self.exog]
+        vintage_columns = list(dict.fromkeys(self.futr_exog_vintages.values()))
+        required = ["unique_id", "ds", *self.futr_exog, *vintage_columns]
         missing = [column for column in required if column not in future_df.columns]
         if missing:
             raise ValueError(f"Future data is missing required columns: {missing}")
@@ -245,6 +286,17 @@ class ForecastEngine:
                 raise ValueError(
                     f"Future data for {unique_id!r} must contain exactly {horizon} contiguous rows after {last}."
                 )
+            if window.filter(pl.col("ds") <= last).height:
+                raise ValueError("Future model inputs contain timestamps at or before the forecast cutoff.")
+            for feature, vintage_column in self.futr_exog_vintages.items():
+                if window.filter(pl.col(vintage_column) > last).height:
+                    raise ValueError(
+                        f"Future covariate {feature!r} uses a vintage issued after cutoff {last}."
+                    )
+                if window.filter(pl.col(vintage_column) >= pl.col("ds")).height:
+                    raise ValueError(
+                        f"Future covariate {feature!r} contains a vintage not issued before its target."
+                    )
             windows.append(window)
         return pl.concat(windows).sort(["unique_id", "ds"])
 
@@ -254,6 +306,8 @@ class ForecastEngine:
         *,
         horizon: int | None = None,
         exog: list[str] | None = None,
+        hist_exog: list[str] | None = None,
+        futr_exog: list[str] | None = None,
         history_df: pl.DataFrame | None = None,
         level: list[int] | None = None,
         ensemble_weights: dict[str, float] | None = None,
@@ -263,11 +317,27 @@ class ForecastEngine:
         horizon = horizon or self.horizon
         if self.config.strategy == "direct" and horizon != self.horizon:
             raise ValueError("A direct model can only predict the horizon used during fitting.")
-        requested_exog = tuple(exog or [])
-        if requested_exog != self.exog:
-            raise ValueError(f"Prediction exogenous columns {requested_exog} differ from fitted {self.exog}.")
+        requested_historical, requested_future = resolve_covariate_names(
+            exog=exog,
+            hist_exog=hist_exog,
+            futr_exog=futr_exog,
+        )
+        if requested_historical != self.hist_exog or requested_future != self.futr_exog:
+            raise ValueError(
+                "Prediction covariate roles differ from the fitted roles: "
+                f"hist={self.hist_exog}, futr={self.futr_exog}."
+            )
         history = history_df.sort(["unique_id", "ds"]) if history_df is not None else self._train_df
-        validate_schema(history, exog=list(self.exog), require_complete=True)
+        validate_schema(
+            history,
+            exog=[*self.hist_exog, *self.futr_exog],
+            require_complete=True,
+        )
+        _validate_historical_vintages(
+            history,
+            self.futr_exog_vintages,
+            context="Prediction history",
+        )
         changed_origin = any(
             cast(datetime, series["ds"].max()) != self._fit_end[str(series["unique_id"][0])]
             for series in history.partition_by("unique_id", maintain_order=True)
@@ -277,11 +347,13 @@ class ForecastEngine:
         window = self._future_window(future_df, history, horizon)
         levels = level if level is not None else list(self.config.interval_levels)
         frames: list[pl.DataFrame] = []
-        x_df = window.select(["unique_id", "ds", *self.exog]) if self.exog else None
+        x_df = window.select(["unique_id", "ds", *self.futr_exog]) if self.futr_exog else None
         if self._mlf is not None:
             kwargs: dict[str, Any] = {"h": horizon, "X_df": x_df}
             if history_df is not None:
-                kwargs["new_df"] = history.select(["unique_id", "ds", "y", *self.exog])
+                kwargs["new_df"] = history.select(
+                    ["unique_id", "ds", "y", *self.futr_exog]
+                )
             if levels and self._intervals_calibrated:
                 kwargs["level"] = levels
             frames.append(_as_polars(self._mlf.predict(**kwargs)))
@@ -290,11 +362,11 @@ class ForecastEngine:
         if self._stats_univariate is not None:
             frames.append(_as_polars(self._stats_univariate.predict(h=horizon, level=levels or None)))
         if self._neural is not None:
-            neural_future = window.select(["unique_id", "ds", *self.exog]).to_pandas()
+            neural_future = window.select(["unique_id", "ds", *self.futr_exog]).to_pandas()
             neural_kwargs: dict[str, Any] = {"futr_df": neural_future}
             if history_df is not None:
                 neural_kwargs["df"] = history.select(
-                    ["unique_id", "ds", "y", *self.exog]
+                    ["unique_id", "ds", "y", *self.hist_exog, *self.futr_exog]
                 ).to_pandas()
             frames.append(_as_polars(self._neural.predict(**neural_kwargs)))
         if not frames:
@@ -347,12 +419,18 @@ def fit(
     *,
     horizon: int,
     exog: list[str] | None = None,
+    hist_exog: list[str] | None = None,
+    futr_exog: list[str] | None = None,
+    futr_exog_vintages: dict[str, str] | None = None,
     training_window: int | None = None,
 ) -> ForecastEngine:
     return mlf.fit(
         train_df,
         horizon=horizon,
         exog=exog,
+        hist_exog=hist_exog,
+        futr_exog=futr_exog,
+        futr_exog_vintages=futr_exog_vintages,
         training_window=training_window,
     )
 
@@ -363,6 +441,8 @@ def predict(
     *,
     horizon: int,
     exog: list[str] | None = None,
+    hist_exog: list[str] | None = None,
+    futr_exog: list[str] | None = None,
     level: list[int] | None = None,
     ensemble_weights: dict[str, float] | None = None,
     history_df: pl.DataFrame | None = None,
@@ -371,6 +451,8 @@ def predict(
         test_df,
         horizon=horizon,
         exog=exog,
+        hist_exog=hist_exog,
+        futr_exog=futr_exog,
         level=level,
         ensemble_weights=ensemble_weights,
         history_df=history_df,

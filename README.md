@@ -269,11 +269,11 @@ the top-level `forecastx` package.
 - Training and evaluation are chronological; future targets are never used as
   features.
 - Ensemble weights and conformal intervals are calibrated on pre-test windows.
-- A future exogenous variable must be known at the forecast origin for every step
-  in the requested horizon.
-- The included retrospective heat-demand example uses realized `mean_temp`.
-  Operational evaluation should instead use the archived weather forecast that
-  was available at each historical origin.
+- Role-aware calls use Nixtla's `hist_exog`/`futr_exog` notation. Forecast-type
+  future inputs require a vintage timestamp no later than each fold's cutoff.
+- The main heat-demand run keeps `mean_temp_actual` historical-only and builds a
+  reproducible causal `mean_temp_forecast` proxy from the measurement available
+  24 hours earlier. Production evaluation still requires archived forecasts.
 
 ## Tests
 
